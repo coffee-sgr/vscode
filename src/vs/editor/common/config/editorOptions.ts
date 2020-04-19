@@ -589,6 +589,11 @@ export interface IEditorOptions {
 	 * Defaults to false.
 	 */
 	definitionLinkOpensInPeek?: boolean;
+	/**
+	 * Controls whether backspace deletes the whole line when the cursor is in the leading blank space.
+	 * Defaults to false.
+	 */
+	deleteAllLeadingBlankspace?: boolean;
 }
 
 export interface IEditorConstructionOptions extends IEditorOptions {
@@ -3357,6 +3362,7 @@ export const enum EditorOption {
 	cursorSurroundingLines,
 	cursorSurroundingLinesStyle,
 	cursorWidth,
+	deleteAllLeadingBlankspace,
 	disableLayerHinting,
 	disableMonospaceOptimizations,
 	dragAndDrop,
@@ -4083,6 +4089,10 @@ export const EditorOptions = {
 			],
 			description: nls.localize('wrappingStrategy', "Controls the algorithm that computes wrapping points.")
 		}
+	)),
+	deleteAllLeadingBlankspace: register(new EditorBooleanOption(
+		EditorOption.deleteAllLeadingBlankspace, 'deleteAllLeadingBlankspace', false,
+		{ description: nls.localize('deleteAllLeadingBlankspace', "Controls whether backspace deletes the whole line when the cursor is in the leading blank space.") }
 	)),
 
 	// Leave these at the end (because they have dependencies!)

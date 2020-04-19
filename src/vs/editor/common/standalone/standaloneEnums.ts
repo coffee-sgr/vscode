@@ -282,7 +282,8 @@ export enum EditorOption {
 	pixelRatio = 112,
 	tabFocusMode = 113,
 	layoutInfo = 114,
-	wrappingInfo = 115
+	wrappingInfo = 115,
+	deleteAllLeadingBlankspace = 116,
 }
 
 /**
