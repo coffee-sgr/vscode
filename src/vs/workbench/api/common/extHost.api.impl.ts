@@ -570,6 +570,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 				return extHostTerminalService.createTerminal(nameOrOptions, shellPath, shellArgs);
 			},
 			registerTerminalLinkHandler(handler: vscode.TerminalLinkHandler): vscode.Disposable {
+				checkProposedApiEnabled(extension);
 				return extHostTerminalService.registerLinkHandler(handler);
 			},
 			registerTreeDataProvider(viewId: string, treeDataProvider: vscode.TreeDataProvider<any>): vscode.Disposable {
@@ -846,8 +847,8 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 			onDidChangeBreakpoints(listener, thisArgs?, disposables?) {
 				return extHostDebugService.onDidChangeBreakpoints(listener, thisArgs, disposables);
 			},
-			registerDebugConfigurationProvider(debugType: string, provider: vscode.DebugConfigurationProvider) {
-				return extHostDebugService.registerDebugConfigurationProvider(debugType, provider);
+			registerDebugConfigurationProvider(debugType: string, provider: vscode.DebugConfigurationProvider, scope?: vscode.DebugConfigurationProviderScope) {
+				return extHostDebugService.registerDebugConfigurationProvider(debugType, provider, scope || extHostTypes.DebugConfigurationProviderScope.Initial);
 			},
 			registerDebugAdapterDescriptorFactory(debugType: string, factory: vscode.DebugAdapterDescriptorFactory) {
 				return extHostDebugService.registerDebugAdapterDescriptorFactory(extension, debugType, factory);
@@ -1032,6 +1033,7 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
 			CallHierarchyIncomingCall: extHostTypes.CallHierarchyIncomingCall,
 			CallHierarchyItem: extHostTypes.CallHierarchyItem,
 			DebugConsoleMode: extHostTypes.DebugConsoleMode,
+			DebugConfigurationProviderScope: extHostTypes.DebugConfigurationProviderScope,
 			Decoration: extHostTypes.Decoration,
 			UIKind: UIKind,
 			ColorThemeKind: extHostTypes.ColorThemeKind,
