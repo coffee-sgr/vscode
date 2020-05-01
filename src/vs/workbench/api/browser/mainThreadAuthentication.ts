@@ -16,6 +16,8 @@ import { MenuRegistry, MenuId } from 'vs/platform/actions/common/actions';
 import { CommandsRegistry } from 'vs/platform/commands/common/commands';
 import { IQuickInputService } from 'vs/platform/quickinput/common/quickInput';
 import { INotificationService } from 'vs/platform/notification/common/notification';
+import { IStorageKeysSyncRegistryService } from 'vs/platform/userDataSync/common/storageKeys';
+import { IRemoteAgentService } from 'vs/workbench/services/remote/common/remoteAgentService';
 
 interface AllowedExtension {
 	id: string;
@@ -23,6 +25,8 @@ interface AllowedExtension {
 }
 
 const accountUsages = new Map<string, { [accountName: string]: string[] }>();
+
+const VSO_ALLOWED_EXTENSIONS = ['github.vscode-pull-request-github', 'github.vscode-pull-request-github-insiders', 'vscode.git'];
 
 function addAccountUsage(providerId: string, accountName: string, extensionOrFeatureName: string) {
 	const providerAccountUsage = accountUsages.get(providerId);
@@ -62,7 +66,8 @@ export class MainThreadAuthenticationProvider extends Disposable {
 		private readonly _proxy: ExtHostAuthenticationShape,
 		public readonly id: string,
 		public readonly displayName: string,
-		private readonly notificationService: INotificationService
+		private readonly notificationService: INotificationService,
+		private readonly storageKeysSyncRegistryService: IStorageKeysSyncRegistryService
 	) {
 		super();
 	}
@@ -129,24 +134,26 @@ export class MainThreadAuthenticationProvider extends Disposable {
 	}
 
 	private registerSession(session: modes.AuthenticationSession) {
-		this._sessions.set(session.id, session.accountName);
+		this._sessions.set(session.id, session.account.displayName);
 
-		const existingSessionsForAccount = this._accounts.get(session.accountName);
+		const existingSessionsForAccount = this._accounts.get(session.account.displayName);
 		if (existingSessionsForAccount) {
-			this._accounts.set(session.accountName, existingSessionsForAccount.concat(session.id));
+			this._accounts.set(session.account.displayName, existingSessionsForAccount.concat(session.id));
 			return;
 		} else {
-			this._accounts.set(session.accountName, [session.id]);
+			this._accounts.set(session.account.displayName, [session.id]);
 		}
 
 		const menuItem = MenuRegistry.appendMenuItem(MenuId.AccountsContext, {
 			group: '1_accounts',
 			command: {
 				id: `configureSessions${session.id}`,
-				title: `${session.accountName} (${this.displayName})`
+				title: `${session.account.displayName} (${this.displayName})`
 			},
 			order: 3
 		});
+
+		this.storageKeysSyncRegistryService.registerStorageKey({ key: `${this.id}-${session.account.displayName}`, version: 1 });
 
 		const manageCommand = CommandsRegistry.registerCommand({
 			id: `configureSessions${session.id}`,
@@ -170,11 +177,11 @@ export class MainThreadAuthenticationProvider extends Disposable {
 					}
 
 					if (selected.label === manage) {
-						this.manageTrustedExtensions(quickInputService, storageService, session.accountName);
+						this.manageTrustedExtensions(quickInputService, storageService, session.account.displayName);
 					}
 
 					if (selected.label === showUsage) {
-						this.showUsage(quickInputService, session.accountName);
+						this.showUsage(quickInputService, session.account.displayName);
 					}
 
 					quickPick.dispose();
@@ -188,28 +195,28 @@ export class MainThreadAuthenticationProvider extends Disposable {
 			},
 		});
 
-		this._sessionMenuItems.set(session.accountName, [menuItem, manageCommand]);
+		this._sessionMenuItems.set(session.account.displayName, [menuItem, manageCommand]);
 	}
 
 	async signOut(dialogService: IDialogService, session: modes.AuthenticationSession): Promise<void> {
 		const providerUsage = accountUsages.get(this.id);
-		const accountUsage = (providerUsage || {})[session.accountName] || [];
-		const sessionsForAccount = this._accounts.get(session.accountName);
+		const accountUsage = (providerUsage || {})[session.account.displayName] || [];
+		const sessionsForAccount = this._accounts.get(session.account.displayName);
 
 		// Skip dialog if nothing is using the account
 		if (!accountUsage.length) {
-			accountUsages.set(this.id, { [session.accountName]: [] });
+			accountUsages.set(this.id, { [session.account.displayName]: [] });
 			sessionsForAccount?.forEach(sessionId => this.logout(sessionId));
 			return;
 		}
 
 		const result = await dialogService.confirm({
-			title: nls.localize('signOutConfirm', "Sign out of {0}", session.accountName),
-			message: nls.localize('signOutMessage', "The account {0} is currently used by: \n\n{1}\n\n Sign out of these features?", session.accountName, accountUsage.join('\n'))
+			title: nls.localize('signOutConfirm', "Sign out of {0}", session.account.displayName),
+			message: nls.localize('signOutMessage', "The account {0} is currently used by: \n\n{1}\n\n Sign out of these features?", session.account.displayName, accountUsage.join('\n'))
 		});
 
 		if (result.confirmed) {
-			accountUsages.set(this.id, { [session.accountName]: [] });
+			accountUsages.set(this.id, { [session.account.displayName]: [] });
 			sessionsForAccount?.forEach(sessionId => this.logout(sessionId));
 		}
 	}
@@ -218,9 +225,9 @@ export class MainThreadAuthenticationProvider extends Disposable {
 		return (await this._proxy.$getSessions(this.id)).map(session => {
 			return {
 				id: session.id,
-				accountName: session.accountName,
+				account: session.account,
 				getAccessToken: () => {
-					addAccountUsage(this.id, session.accountName, nls.localize('sync', "Preferences Sync"));
+					addAccountUsage(this.id, session.account.displayName, nls.localize('sync', "Preferences Sync"));
 					return this._proxy.$getSessionAccessToken(this.id, session.id);
 				}
 			};
@@ -258,7 +265,7 @@ export class MainThreadAuthenticationProvider extends Disposable {
 		return this._proxy.$login(this.id, scopes).then(session => {
 			return {
 				id: session.id,
-				accountName: session.accountName,
+				account: session.account,
 				getAccessToken: () => this._proxy.$getSessionAccessToken(this.id, session.id)
 			};
 		});
@@ -285,14 +292,16 @@ export class MainThreadAuthentication extends Disposable implements MainThreadAu
 		@IAuthenticationService private readonly authenticationService: IAuthenticationService,
 		@IDialogService private readonly dialogService: IDialogService,
 		@IStorageService private readonly storageService: IStorageService,
-		@INotificationService private readonly notificationService: INotificationService
+		@INotificationService private readonly notificationService: INotificationService,
+		@IStorageKeysSyncRegistryService private readonly storageKeysSyncRegistryService: IStorageKeysSyncRegistryService,
+		@IRemoteAgentService private readonly remoteAgentService: IRemoteAgentService
 	) {
 		super();
 		this._proxy = extHostContext.getProxy(ExtHostContext.ExtHostAuthentication);
 	}
 
 	async $registerAuthenticationProvider(id: string, displayName: string): Promise<void> {
-		const provider = new MainThreadAuthenticationProvider(this._proxy, id, displayName, this.notificationService);
+		const provider = new MainThreadAuthenticationProvider(this._proxy, id, displayName, this.notificationService, this.storageKeysSyncRegistryService);
 		await provider.initialize();
 		this.authenticationService.registerAuthenticationProvider(id, provider);
 	}
@@ -314,16 +323,21 @@ export class MainThreadAuthentication extends Disposable implements MainThreadAu
 			return true;
 		}
 
+		const remoteConnection = this.remoteAgentService.getConnection();
+		if (remoteConnection && remoteConnection.remoteAuthority && remoteConnection.remoteAuthority.startsWith('vsonline') && VSO_ALLOWED_EXTENSIONS.includes(extensionId)) {
+			return true;
+		}
+
 		const { choice } = await this.dialogService.show(
 			Severity.Info,
-			nls.localize('confirmAuthenticationAccess', "The extension '{0}' is trying to access authentication information for the {1} account '{2}'.", extensionName, providerName, accountName),
-			[nls.localize('cancel', "Cancel"), nls.localize('allow', "Allow")],
+			nls.localize('confirmAuthenticationAccess', "The extension '{0}' wants to access the {1} account '{2}'.", extensionName, providerName, accountName),
+			[nls.localize('allow', "Allow"), nls.localize('cancel', "Cancel")],
 			{
-				cancelId: 0
+				cancelId: 1
 			}
 		);
 
-		const allow = choice === 1;
+		const allow = choice === 0;
 		if (allow) {
 			allowList.push({ id: extensionId, name: extensionName });
 			this.storageService.store(`${providerId}-${accountName}`, JSON.stringify(allowList), StorageScope.GLOBAL);
@@ -336,13 +350,13 @@ export class MainThreadAuthentication extends Disposable implements MainThreadAu
 		const { choice } = await this.dialogService.show(
 			Severity.Info,
 			nls.localize('confirmLogin', "The extension '{0}' wants to sign in using {1}.", extensionName, providerName),
-			[nls.localize('cancel', "Cancel"), nls.localize('allow', "Allow")],
+			[nls.localize('allow', "Allow"), nls.localize('cancel', "Cancel")],
 			{
-				cancelId: 0
+				cancelId: 1
 			}
 		);
 
-		return choice === 1;
+		return choice === 0;
 	}
 
 	async $setTrustedExtension(providerId: string, accountName: string, extensionId: string, extensionName: string): Promise<void> {
